@@ -664,7 +664,7 @@ public class SolutionManagerTest {
             softly.assertThat(recommendation1.proposition()).isEqualTo(solution.getValueList().get(0));
             softly.assertThat(recommendation1.scoreAnalysisDiff()
                     .score()).isEqualTo(SimpleScore.of(2)); // Two entities no longer share null value.
-            // The matchCount should not be -2?
+            // The matchCount is negative (-2) in the case of FETCH_MATCH_COUNT
             softly.assertThat(recommendation1.scoreAnalysisDiff()
                     .constraintMap().values().iterator().next().matchCount()).isGreaterThanOrEqualTo(-1);
         });
@@ -694,6 +694,54 @@ public class SolutionManagerTest {
             softly.assertThat(solution.getEntityList().get(1).getValue()).isEqualTo(solution.getValueList().get(1));
             softly.assertThat(solution.getEntityList().get(2).getValue()).isNull();
             softly.assertThat(solution.getScore()).isNull();
+        });
+    }
+
+    @ParameterizedTest
+    @EnumSource(SolutionManagerSource.class)
+    void recommendAssignmentWithUnassignedFetchAllVsFetchMatchCount(SolutionManagerSource SolutionManagerSource) {
+        int valueSize = 3;
+        var solution = TestdataAllowsUnassignedSolution.generateSolution(valueSize, 3);
+        var uninitializedEntity = solution.getEntityList().get(2);
+        uninitializedEntity.setValue(null);
+
+        // At this point, entity 0 and entity 2 are unassigned.
+        // Entity 1 is assigned to value #1.
+        // But only entity2 should be processed for recommendations.
+        var solutionManager = SolutionManagerSource.createSolutionManager(SOLVER_FACTORY_UNASSIGNED);
+        assertThat(solutionManager).isNotNull();
+        var matchCountRecommendationList =
+                solutionManager.recommendAssignment(solution, uninitializedEntity, TestdataAllowsUnassignedEntity::getValue, ScoreAnalysisFetchPolicy.FETCH_MATCH_COUNT);
+
+        var justificationsRecommendationList =
+                solutionManager.recommendAssignment(solution, uninitializedEntity, TestdataAllowsUnassignedEntity::getValue, ScoreAnalysisFetchPolicy.FETCH_ALL);
+
+        // Three values means there need to be four recommendations, one extra for unassigned.
+        assertThat(matchCountRecommendationList).hasSize(valueSize + 1);
+        assertThat(justificationsRecommendationList).hasSize(valueSize + 1);
+        /*
+         * The calculator penalizes how many entities have the same value as another entity.
+         * Therefore the recommendation to assign value 0 and value 2 need to come first and in the order of the placer,
+         * as it means two entities no longer share a value, improving the score.
+         */
+        var matchCountRecommendation1 = matchCountRecommendationList.get(0);
+        var justificationsRecommendation1 = justificationsRecommendationList.get(0);
+
+        assertSoftly(softly -> {
+            softly.assertThat(matchCountRecommendation1.proposition()).isEqualTo(solution.getValueList().get(0));
+            softly.assertThat(justificationsRecommendation1.proposition()).isEqualTo(solution.getValueList().get(0));
+
+            softly.assertThat(matchCountRecommendation1.scoreAnalysisDiff()
+                    .score()).isEqualTo(SimpleScore.of(2)); // Two entities no longer share null value.
+            softly.assertThat(justificationsRecommendation1.scoreAnalysisDiff()
+                    .score()).isEqualTo(SimpleScore.of(2)); // Two entities no longer share null value.
+
+            // The matchCount is expected to be the same in the case of both FETCH_ALL and FETCH_MATCH_COUNT
+            int matchCountForFetchMatchCount = matchCountRecommendation1.scoreAnalysisDiff()
+                    .constraintMap().values().iterator().next().matchCount();
+            int matchCountForFetchAll = justificationsRecommendation1.scoreAnalysisDiff()
+                    .constraintMap().values().iterator().next().matchCount();
+            softly.assertThat(matchCountForFetchMatchCount).isEqualTo(matchCountForFetchAll);
         });
     }
 
